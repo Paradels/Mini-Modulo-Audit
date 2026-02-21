@@ -1,14 +1,10 @@
+<!-- filepath: /mnt/c/Users/LUISM/OneDrive/Escritorio/Prueba Tec/Mini-Modulo-Audit/src/App.vue -->
 <template>
-  <div>
-    <h1>Mini Modulo Audit - Vue 3</h1>
-    <p>App inicial creada por configuración automática.</p>
-  </div>
+  <router-view />
 </template>
 
-<script>
-export default {
-  name: 'App'
-}
+<script setup>
+// App raíz solo renderiza las vistas por ruta
 </script>
 
 <style>
