@@ -49,6 +49,7 @@
                 id="name"
                 v-model.trim="formData.name"
                 type="text"
+                maxlength="80"
                 class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-200"
                 placeholder="Ej. Auditoría ISO 27001 - Compras"
               />
@@ -63,6 +64,7 @@
                 id="process"
                 v-model.trim="formData.process"
                 type="text"
+                maxlength="80"
                 class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-200"
                 placeholder="Compras / Seguridad..."
               />
@@ -77,6 +79,7 @@
                 id="owner"
                 v-model.trim="formData.ownerName"
                 type="text"
+                maxlength="80"
                 class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-200"
                 placeholder="Nombre del responsable"
               />
@@ -117,7 +120,22 @@
             Selecciona una plantilla
           </h2>
 
-          <div class="space-y-2">
+          <div v-if="templatesLoading" class="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+            Cargando plantillas...
+          </div>
+
+          <div v-else-if="templatesError" class="rounded-lg border border-rose-200 bg-rose-50 p-3">
+            <p class="text-sm text-rose-700">{{ templatesError }}</p>
+            <button
+              type="button"
+              class="mt-2 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-700"
+              @click="loadTemplates"
+            >
+              Reintentar
+            </button>
+          </div>
+
+          <div v-else class="space-y-2">
             <label
               v-for="template in templates"
               :key="template.id"
@@ -138,6 +156,10 @@
                 </p>
               </div>
             </label>
+
+            <p v-if="templateValidationError" class="text-xs text-rose-600">
+              {{ templateValidationError }}
+            </p>
           </div>
 
           <div v-if="selectedTemplate" class="mt-4 rounded-lg bg-slate-50 p-3">
@@ -162,10 +184,10 @@
             <button
               type="button"
               class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-              :disabled="!formData.templateId"
+              :disabled="!isTemplateSelectionValid || creating"
               @click="createAudit"
             >
-              Crear auditoría
+              {{ creating ? "Creando..." : "Crear auditoría" }}
             </button>
           </div>
         </article>
@@ -175,12 +197,21 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
+import {
+  createAudit as createAuditRequest,
+  fetchTemplates,
+} from "../services/auditService";
 
 const router = useRouter();
 const step = ref(1);
 const todayDate = getTodayLocalDate();
+const creating = ref(false);
+const templatesLoading = ref(false);
+const templatesError = ref("");
+const templateValidationError = ref("");
+const MAX_TEXT_LENGTH = 80;
 
 const formData = reactive({
   name: "",
@@ -190,32 +221,16 @@ const formData = reactive({
   templateId: "",
 });
 
-const templates = [
-  {
-    id: "tpl_10",
-    name: "ISO 27001 Base",
-    process: "Seguridad",
-    checkCount: 24,
-    checksPreview: [
-      { title: "Gestión de accesos", priority: "HIGH" },
-      { title: "Backup y recuperación", priority: "MEDIUM" },
-    ],
-  },
-  {
-    id: "tpl_12",
-    name: "Checklist Compras",
-    process: "Compras",
-    checkCount: 14,
-    checksPreview: [
-      { title: "Homologación de proveedores", priority: "HIGH" },
-      { title: "Evaluación de contratos", priority: "LOW" },
-    ],
-  },
-];
+const templates = ref([]);
 
 const selectedTemplate = computed(() =>
-  templates.find((template) => template.id === formData.templateId),
+  templates.value.find((template) => template.id === formData.templateId),
 );
+
+const isTemplateSelectionValid = computed(() => {
+  if (!formData.templateId) return false;
+  return templates.value.some((template) => template.id === formData.templateId);
+});
 
 function validateForm(event) {
   event.preventDefault();
@@ -235,6 +250,9 @@ function validateForm(event) {
   if (nameValue === "") {
     showError(nameField, "El nombre es obligatorio.");
     hasErrors = true;
+  } else if (nameValue.length > MAX_TEXT_LENGTH) {
+    showError(nameField, "El nombre es demasiado largo.");
+    hasErrors = true;
   } else {
     clearError(nameField);
   }
@@ -242,12 +260,18 @@ function validateForm(event) {
   if (processValue === "") {
     showError(processField, "El proceso es obligatorio.");
     hasErrors = true;
+  } else if (processValue.length > MAX_TEXT_LENGTH) {
+    showError(processField, "El proceso es demasiado largo.");
+    hasErrors = true;
   } else {
     clearError(processField);
   }
 
   if (ownerValue === "") {
     showError(ownerField, "El responsable es obligatorio.");
+    hasErrors = true;
+  } else if (ownerValue.length > MAX_TEXT_LENGTH) {
+    showError(ownerField, "El nombre del responsable es demasiado largo.");
     hasErrors = true;
   } else {
     clearError(ownerField);
@@ -300,8 +324,63 @@ function getTodayLocalDate() {
   return `${year}-${month}-${day}`;
 }
 
-function createAudit() {
-  const newAuditId = `aud_${Math.floor(Math.random() * 9000 + 1000)}`;
-  router.push(`/audits/${newAuditId}`);
+async function createAudit() {
+  if (creating.value) return;
+
+  if (!formData.templateId) {
+    templateValidationError.value = "Debes seleccionar una plantilla.";
+    return;
+  }
+
+  if (!isTemplateSelectionValid.value) {
+    templateValidationError.value = "La plantilla seleccionada no es válida.";
+    return;
+  }
+
+  templateValidationError.value = "";
+
+  creating.value = true;
+
+  try {
+    const ownerId = `u_custom_${Date.now()}`;
+    const response = await createAuditRequest({
+      name: formData.name,
+      process: formData.process,
+      owner: {
+        id: ownerId,
+        name: formData.ownerName,
+      },
+      targetDate: formData.targetDate,
+      templateId: formData.templateId,
+    });
+
+    await router.push(`/audits/${response.audit.id}`);
+  } catch (error) {
+    console.error(error);
+    alert("No se pudo crear la auditoría. Inténtalo de nuevo.");
+  } finally {
+    creating.value = false;
+  }
 }
+
+async function loadTemplates() {
+  templatesLoading.value = true;
+  templatesError.value = "";
+
+  try {
+    templates.value = await fetchTemplates();
+
+    if (formData.templateId && !isTemplateSelectionValid.value) {
+      formData.templateId = "";
+    }
+  } catch (error) {
+    console.error(error);
+    templates.value = [];
+    templatesError.value = "No se pudieron cargar las plantillas. Inténtalo de nuevo.";
+  } finally {
+    templatesLoading.value = false;
+  }
+}
+
+onMounted(loadTemplates);
 </script>
