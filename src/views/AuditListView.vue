@@ -209,14 +209,19 @@ async function loadAudits() {
   error.value = "";
 
   try {
-    rows.value = await fetchAudits({
+    const result = await fetchAudits({
       search: filters.search,
       status: filters.status,
+      page: 1,
+      pageSize: 10,
       forceError: route.query.error === "1",
+      errorRate: 0, // temporal: quítalo o pon 0.15 luego
     });
+
+    rows.value = result.items;
   } catch (err) {
     rows.value = [];
-    error.value = err instanceof Error ? err.message : "Error inesperado";
+    error.value = err instanceof Error ? err.message : "Unexpected error";
   } finally {
     loading.value = false;
   }
