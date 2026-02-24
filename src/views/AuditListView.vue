@@ -49,6 +49,7 @@
           <option value="DRAFT">DRAFT</option>
           <option value="IN_PROGRESS">IN_PROGRESS</option>
           <option value="DONE">DONE</option>
+          <option value="BLOCKED">BLOCKED</option>
         </select>
         <button
           type="button"
@@ -191,7 +192,7 @@ const previewOpen = ref(false);
 const selectedAudit = ref(null);
 
 const filters = reactive({
-  search: typeof route.query.search === "string" ? route.query.search : "",
+  search: typeof route.query.q === "string" ? route.query.q : "",
   status: typeof route.query.status === "string" ? route.query.status : "ALL",
 });
 
@@ -244,12 +245,12 @@ async function loadAudits() {
 
   try {
     const result = await fetchAudits({
-      search: filters.search,
-      status: filters.status,
+      q: filters.search,
+      status: filters.status === "ALL" ? [] : [filters.status],
       page: pagination.page,
       pageSize: pagination.pageSize,
-      forceError: route.query.error === "1",
-      errorRate: 0, // temporal: quítalo o pon 0.15 luego
+      sort: "-createdAt",
+      doneLast: true,
     });
 
     rows.value = result.items;
@@ -278,7 +279,7 @@ async function loadAudits() {
 function syncQuery() {
   const query = {};
 
-  if (filters.search) query.search = filters.search;
+  if (filters.search) query.q = filters.search;
   if (filters.status !== "ALL") query.status = filters.status;
   if (pagination.page > 1) query.page = String(pagination.page);
 
@@ -322,7 +323,7 @@ function retry() {
 watch(
   () => route.query,
   (query) => {
-    const nextSearch = typeof query.search === "string" ? query.search : "";
+    const nextSearch = typeof query.q === "string" ? query.q : "";
     const nextStatus = typeof query.status === "string" ? query.status : "ALL";
     const nextPage = Math.max(1, Number(query.page) || 1);
 
