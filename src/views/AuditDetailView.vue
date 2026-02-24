@@ -18,6 +18,20 @@
       </header>
       <main>
         <article
+          v-if="loadError"
+          class="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-5 shadow-sm"
+        >
+          <p class="text-sm font-medium text-rose-700">{{ loadError }}</p>
+          <button
+            class="mt-3 rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700"
+            @click="loadAuditDetail"
+          >
+            Reintentar
+          </button>
+        </article>
+
+        <article
+          v-if="!loadError"
           class="mb-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
         >
           <div>
@@ -56,13 +70,24 @@
             </div>
           </div>
 
-          <button
-            class="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="running || audit.status === status.DONE"
-            @click="runAudit"
-          >
-            {{ running ?  status.EXECUTING : status.INIT }}
-          </button>
+          <div class="mt-4 flex flex-wrap items-center gap-3">
+            <select
+              v-model="executionMode"
+              class="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-200"
+              :disabled="running"
+            >
+              <option value="auto">Auto (QUEUED → RUNNING → OK/KO)</option>
+              <option value="manual">Manual (evaluador marca OK/KO)</option>
+            </select>
+
+            <button
+              class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="running || loading || audit.status === status.DONE"
+              @click="runAudit"
+            >
+              {{ running ?  status.EXECUTING : status.INIT }}
+            </button>
+          </div>
         </article>
 
         <article
@@ -96,6 +121,28 @@
               <p class="mt-1 text-xs text-slate-500">
                 updatedAt: {{ check.updatedAt }}
               </p>
+
+              <div
+                v-if="audit.status === status.IN_PROGRESS && executionMode === 'manual'"
+                class="mt-2 flex items-center gap-2"
+              >
+                <button
+                  type="button"
+                  class="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="running"
+                  @click="markCheck(check, checkStatus.OK)"
+                >
+                  Marcar OK
+                </button>
+                <button
+                  type="button"
+                  class="rounded-md bg-rose-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="running"
+                  @click="markCheck(check, checkStatus.KO)"
+                >
+                  Marcar KO
+                </button>
+              </div>
             </li>
           </ul>
         </article>
@@ -105,11 +152,19 @@
 </template>
 
 <script setup>
-import { reactive, ref } from "vue";
+import { onMounted, reactive, ref, watch } from "vue";
 import { useRoute } from "vue-router";
+import {
+  fetchAuditDetail,
+  patchAuditCheck,
+  runAudit as runAuditRequest,
+} from "../services/auditService";
 
 const route = useRoute();
 const running = ref(false);
+const loading = ref(false);
+const loadError = ref("");
+const executionMode = ref("auto");
 
 const status = {
   DRAFT: "DRAFT",
@@ -136,87 +191,97 @@ const priorityStatus = {
 
 const audit = reactive({
   id: route.params.id || "aud_1001",
-  name: "Auditoría ISO 27001 - Compras",
-  process: "Compras",
-  status: status.DRAFT, // DRAFT | IN_PROGRESS | DONE | BLOCKED
+  name: "Cargando...",
+  process: "-",
+  status: status.DRAFT,
   progress: 0,
-  owner: { id: "u_1", name: "Ana López" },
-  targetDate: "2026-03-20",
-  updatedAt: "2026-02-09T10:30:00Z",
-  createdAt: "2026-02-01T09:00:00Z",
-  templateId: "tpl_10",
-  checks: [
-    {
-      id: "chk_501",
-      title: "Verificar control de acceso a proveedores",
-      priority: priorityStatus.HIGH,
-      status: checkStatus.PENDING,
-      evidence: "",
-      reviewed: false,
-      updatedAt: "2026-02-09T10:30:00Z",
-    },
-    {
-      id: "chk_502",
-      title: "Validar backups de documentación",
-      priority: priorityStatus.MEDIUM,
-      status: checkStatus.PENDING,
-      evidence: "",
-      reviewed: false,
-      updatedAt: "2026-02-09T10:30:00Z",
-    },
-    {
-      id: "chk_503",
-      title: "Revisión de contratos activos",
-      priority: priorityStatus.LOW,
-      status: checkStatus.PENDING,
-      evidence: "",
-      reviewed: false,
-      updatedAt: "2026-02-09T10:30:00Z",
-    },
-  ],
+  owner: { id: "", name: "-" },
+  targetDate: "-",
+  updatedAt: "-",
+  createdAt: "-",
+  templateId: "-",
+  checks: [],
 });
 
-function runAudit() {
-  if (running.value || audit.status === status.DONE) return;
+function applyAuditData(detail) {
+  const { audit: auditData, checks } = detail;
+  audit.id = auditData.id;
+  audit.name = auditData.name;
+  audit.process = auditData.process;
+  audit.status = auditData.status;
+  audit.progress = auditData.progress;
+  audit.owner = auditData.owner;
+  audit.targetDate = auditData.targetDate;
+  audit.updatedAt = auditData.updatedAt;
+  audit.createdAt = auditData.createdAt;
+  audit.templateId = auditData.templateId;
+  audit.checks = checks;
+}
+
+async function loadAuditDetail() {
+  loading.value = true;
+  loadError.value = "";
+
+  try {
+    const detail = await fetchAuditDetail(route.params.id);
+    applyAuditData(detail);
+  } catch (error) {
+    console.error(error);
+    loadError.value = "No se pudo cargar el detalle de la auditoría.";
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function runAudit() {
+  if (running.value || loading.value || audit.status === status.DONE) return;
 
   running.value = true;
-  audit.status = status.IN_PROGRESS;
-  audit.updatedAt = new Date().toISOString();
 
-  // 1) Marcar todos QUEUED
-  audit.checks.forEach((c) => {
-    if (c.status === checkStatus.PENDING) c.status = checkStatus.QUEUED;
-  });
+  try {
+    await runAuditRequest(audit.id, { mode: executionMode.value });
 
-  let i = 0;
-  const executeNext = () => {
-    if (i >= audit.checks.length) {
-      const hasKO = audit.checks.some((c) => c.status === checkStatus.KO);
-      audit.status = hasKO ? status.IN_PROGRESS : status.DONE;
-      running.value = false;
+    if (executionMode.value === "manual") {
+      await loadAuditDetail();
       return;
     }
 
-    const current = audit.checks[i];
-    current.status = checkStatus.RUNNING;
-    current.updatedAt = new Date().toISOString();
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      const detail = await fetchAuditDetail(audit.id);
+      applyAuditData(detail);
 
-    setTimeout(() => {
-      current.status = Math.random() < 0.15 ? checkStatus.KO : checkStatus.OK;
-      current.updatedAt = new Date().toISOString();
+      const hasActiveCheck = audit.checks.some(
+        (check) => check.status === checkStatus.RUNNING || check.status === checkStatus.QUEUED,
+      );
 
-      const executed = audit.checks.filter(
-        (c) => c.status === checkStatus.OK || c.status === checkStatus.KO,
-      ).length;
-      audit.progress = Math.round((executed / audit.checks.length) * 100);
-      audit.updatedAt = new Date().toISOString();
+      if (!hasActiveCheck) break;
+    }
+  } catch (error) {
+    console.error(error);
+    loadError.value = "No se pudo ejecutar la auditoría.";
+  } finally {
+    running.value = false;
+  }
+}
 
-      i += 1;
-      executeNext();
-    }, 700);
-  };
+async function markCheck(check, targetStatus) {
+  if (running.value || loading.value) return;
 
-  executeNext();
+  running.value = true;
+
+  try {
+    await patchAuditCheck(audit.id, check.id, {
+      status: targetStatus,
+      reviewed: true,
+    });
+    await loadAuditDetail();
+  } catch (error) {
+    console.error(error);
+    loadError.value = "No se pudo actualizar el check.";
+  } finally {
+    running.value = false;
+  }
 }
 
 function priorityClass(priority) {
@@ -257,4 +322,15 @@ function auditStatusClass(auditStatus) {
       return "bg-rose-100 text-rose-700"; // BLOCKED
   }
 }
+
+watch(
+  () => route.params.id,
+  () => {
+    loadAuditDetail();
+  },
+);
+
+onMounted(() => {
+  loadAuditDetail();
+});
 </script>
