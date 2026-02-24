@@ -129,6 +129,34 @@
       </template>
     </UiTable>
 
+    <div
+      v-if="!loading && !error && rows.length > 0"
+      class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <p class="text-sm text-slate-600">
+        Página {{ pagination.page }} de {{ pagination.totalPages }} · {{ pagination.total }} resultados
+      </p>
+
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          class="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+          :disabled="pagination.page <= 1"
+          @click="goToPage(pagination.page - 1)"
+        >
+          Anterior
+        </button>
+        <button
+          type="button"
+          class="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+          :disabled="pagination.page >= pagination.totalPages"
+          @click="goToPage(pagination.page + 1)"
+        >
+          Siguiente
+        </button>
+      </div>
+    </div>
+
     <UiModal :open="previewOpen" title="Resumen de auditoría" @close="previewOpen = false">
       <template v-if="selectedAudit">
         <p><strong>ID:</strong> {{ selectedAudit.id }}</p>
@@ -167,6 +195,20 @@ const filters = reactive({
   status: typeof route.query.status === "string" ? route.query.status : "ALL",
 });
 
+const pagination = reactive({
+  page: Math.max(1, Number(route.query.page) || 1),
+  pageSize: 10,
+  total: 0,
+  totalPages: 1,
+});
+
+const summary = reactive({
+  total: 0,
+  inProgress: 0,
+  draft: 0,
+  done: 0,
+});
+
 const toast = reactive({
   open: false,
   message: "",
@@ -181,15 +223,7 @@ const columns = [
   { key: "actions", label: "Acciones" },
 ];
 
-const metrics = computed(() => {
-  const countBy = (status) => rows.value.filter((audit) => audit.status === status).length;
-  return {
-    total: rows.value.length,
-    inProgress: countBy("IN_PROGRESS"),
-    draft: countBy("DRAFT"),
-    done: countBy("DONE"),
-  };
-});
+const metrics = computed(() => summary);
 
 function statusTone(auditStatus) {
   switch (auditStatus) {
@@ -212,15 +246,29 @@ async function loadAudits() {
     const result = await fetchAudits({
       search: filters.search,
       status: filters.status,
-      page: 1,
-      pageSize: 10,
+      page: pagination.page,
+      pageSize: pagination.pageSize,
       forceError: route.query.error === "1",
       errorRate: 0, // temporal: quítalo o pon 0.15 luego
     });
 
     rows.value = result.items;
+    pagination.total = result.total;
+    pagination.totalPages = result.totalPages;
+    pagination.page = result.page;
+
+    summary.total = result.metrics?.total ?? result.total;
+    summary.inProgress = result.metrics?.inProgress ?? 0;
+    summary.draft = result.metrics?.draft ?? 0;
+    summary.done = result.metrics?.done ?? 0;
   } catch (err) {
     rows.value = [];
+    pagination.total = 0;
+    pagination.totalPages = 1;
+    summary.total = 0;
+    summary.inProgress = 0;
+    summary.draft = 0;
+    summary.done = 0;
     error.value = err instanceof Error ? err.message : "Unexpected error";
   } finally {
     loading.value = false;
@@ -232,6 +280,7 @@ function syncQuery() {
 
   if (filters.search) query.search = filters.search;
   if (filters.status !== "ALL") query.status = filters.status;
+  if (pagination.page > 1) query.page = String(pagination.page);
 
   router.replace({ query });
 }
@@ -239,6 +288,13 @@ function syncQuery() {
 function resetFilters() {
   filters.search = "";
   filters.status = "ALL";
+  pagination.page = 1;
+}
+
+function goToPage(nextPage) {
+  const safePage = Math.min(Math.max(1, nextPage), pagination.totalPages);
+  if (safePage === pagination.page) return;
+  pagination.page = safePage;
 }
 
 function openPreview(audit) {
@@ -268,14 +324,16 @@ watch(
   (query) => {
     const nextSearch = typeof query.search === "string" ? query.search : "";
     const nextStatus = typeof query.status === "string" ? query.status : "ALL";
+    const nextPage = Math.max(1, Number(query.page) || 1);
 
     if (filters.search !== nextSearch) filters.search = nextSearch;
     if (filters.status !== nextStatus) filters.status = nextStatus;
+    if (pagination.page !== nextPage) pagination.page = nextPage;
   },
 );
 
 watch(
-  () => [filters.search, filters.status],
+  () => [filters.search, filters.status, pagination.page],
   () => {
     syncQuery();
     loadAudits();
