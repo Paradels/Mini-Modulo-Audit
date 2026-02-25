@@ -1,440 +1,276 @@
-import http from "node:http";
-import fs from "node:fs";
-import path from "node:path";
-import { URL } from "node:url";
+import express from 'express'
+import cors from 'cors'
+import seedDb from '../src/mocks/auditDb.json' with { type: 'json' }
 
-const PORT = Number(process.env.MOCK_API_PORT) || 4000;
-const DB_PATH = path.resolve(process.cwd(), "src/mocks/auditDb.json");
-const RUNS = new Map();
+const app = express()
+app.use(cors())
+app.use(express.json())
 
-const STATUS = {
-  DRAFT: "DRAFT",
-  IN_PROGRESS: "IN_PROGRESS",
-  DONE: "DONE",
-  BLOCKED: "BLOCKED",
-};
+// ---- Config simulación ----
+const PORT = Number(process.env.PORT || 4000)
+const MIN_LATENCY = Number(process.env.MIN_LATENCY || 300)
+const MAX_LATENCY = Number(process.env.MAX_LATENCY || 1200)
+const ERROR_RATE = Number(process.env.ERROR_RATE || 0.15) // 15%
+const KO_RATE = Number(process.env.KO_RATE || 0.15) // 15% para ejecución automática
 
-const CHECK_STATUS = {
-  PENDING: "PENDING",
-  QUEUED: "QUEUED",
-  RUNNING: "RUNNING",
-  OK: "OK",
-  KO: "KO",
-};
+// ---- Estado en memoria ----
+const db = structuredClone(seedDb)
+const runs = new Map() // runId -> { auditId, timer, index }
 
-const ERROR_RATE = Number(process.env.MOCK_API_ERROR_RATE || 0.12);
-const AUTO_KO_RATE = Number(process.env.MOCK_API_KO_RATE || 0.15);
-const MIN_DELAY = 300;
-const MAX_DELAY = 1200;
+// ---- Helpers ----
+const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min
+const nowIso = () => new Date().toISOString()
+const id = (prefix) => `${prefix}_${Math.random().toString(36).slice(2, 9)}`
+const toNum = (v, d) => Number.isFinite(Number(v)) ? Number(v) : d
 
-const DB = readDb();
-
-function readDb() {
-  const raw = fs.readFileSync(DB_PATH, "utf-8");
-  return JSON.parse(raw);
+function parseStatusMulti(status) {
+  if (!status) return []
+  if (Array.isArray(status)) return status.flatMap((s) => s.split(',')).map((s) => s.trim()).filter(Boolean)
+  return String(status).split(',').map((s) => s.trim()).filter(Boolean)
 }
 
-function writeDb() {
-  fs.writeFileSync(DB_PATH, JSON.stringify(DB, null, 2), "utf-8");
-}
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function randomInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function maybeDelayAndFail(res) {
-  await delay(randomInt(MIN_DELAY, MAX_DELAY));
-  if (Math.random() < ERROR_RATE) {
-    sendJson(res, 500, { error: "Mock API random error. Retry." });
-    return true;
-  }
-  return false;
-}
-
-async function readJsonBody(req) {
-  const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
-  const raw = Buffer.concat(chunks).toString("utf-8").trim();
-  if (!raw) return {};
-  return JSON.parse(raw);
-}
-
-function sendJson(res, statusCode, data) {
-  res.writeHead(statusCode, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,PATCH,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-  });
-  res.end(JSON.stringify(data));
-}
-
-function applySort(items, sort = "-updatedAt") {
-  const desc = sort.startsWith("-");
-  const field = desc ? sort.slice(1) : sort;
+function sortItems(items, sort = '-updatedAt') {
+  const desc = String(sort).startsWith('-')
+  const field = desc ? String(sort).slice(1) : String(sort)
   return [...items].sort((a, b) => {
-    const va = a[field] ?? "";
-    const vb = b[field] ?? "";
-    if (va < vb) return desc ? 1 : -1;
-    if (va > vb) return desc ? -1 : 1;
-    return 0;
-  });
+    const av = a[field]
+    const bv = b[field]
+    if (av === bv) return 0
+    if (av == null) return 1
+    if (bv == null) return -1
+    if (av > bv) return desc ? -1 : 1
+    return desc ? 1 : -1
+  })
 }
 
-function parseStatuses(searchParams) {
-  const multi = searchParams.getAll("status");
-  if (multi.length > 1) return multi;
+function getChecksForAudit(auditId) {
+  return db.checksByAudit?.[auditId] || []
+}
 
-  const single = searchParams.get("status");
-  if (!single) return [];
+function setChecksForAudit(auditId, checks) {
+  if (!db.checksByAudit) db.checksByAudit = {}
+  db.checksByAudit[auditId] = checks
+}
 
-  if (single.includes(",")) {
-    return single
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
+function recomputeAudit(audit) {
+  const checks = getChecksForAudit(audit.id)
+  const total = checks.length || 1
+  const done = checks.filter((c) => c.status === 'OK' || c.status === 'KO').length
+  const hasKO = checks.some((c) => c.status === 'KO')
+
+  audit.progress = Math.round((done / total) * 100)
+  audit.updatedAt = nowIso()
+
+  if (done === 0) {
+    audit.status = 'DRAFT'
+    audit.progress = 0
+    return
   }
 
-  return [single];
-}
-
-function getChecksByAuditId(auditId) {
-  return DB.auditChecks.find((entry) => entry.auditId === auditId)?.checks || [];
-}
-
-function ensureChecksByAuditId(auditId) {
-  const current = DB.auditChecks.find((entry) => entry.auditId === auditId);
-  if (current) return current.checks;
-  const created = { auditId, checks: [] };
-  DB.auditChecks.push(created);
-  return created.checks;
-}
-
-function recomputeAuditConsistency(auditId) {
-  const audit = DB.audits.find((item) => item.id === auditId);
-  if (!audit) return;
-  const checks = getChecksByAuditId(auditId);
-  const total = checks.length || 1;
-  const doneCount = checks.filter(
-    (check) => check.status === CHECK_STATUS.OK || check.status === CHECK_STATUS.KO,
-  ).length;
-  const hasKO = checks.some((check) => check.status === CHECK_STATUS.KO);
-
-  audit.progress = Math.round((doneCount / total) * 100);
-
-  if (audit.status !== STATUS.BLOCKED) {
-    if (audit.progress === 0) audit.status = STATUS.DRAFT;
-    else if (audit.progress < 100) audit.status = STATUS.IN_PROGRESS;
-    else audit.status = hasKO ? STATUS.BLOCKED : STATUS.DONE;
+  if (done < total) {
+    audit.status = 'IN_PROGRESS'
+    if (audit.progress === 0) audit.progress = 1
+    if (audit.progress === 100) audit.progress = 99
+    return
   }
 
-  audit.updatedAt = nowIso();
+  // Fin de ejecución
+  audit.status = hasKO ? 'BLOCKED' : 'DONE'
+  audit.progress = 100
 }
 
-function nextAuditId() {
-  const maxId = DB.audits.reduce((maxValue, item) => {
-    const numeric = Number(item.id.replace("aud_", ""));
-    return Number.isNaN(numeric) ? maxValue : Math.max(maxValue, numeric);
-  }, 1000);
-  return `aud_${maxId + 1}`;
+async function withSimulation(req, res, next) {
+  await wait(rand(MIN_LATENCY, MAX_LATENCY))
+  // Excluir healthcheck de errores aleatorios
+  if (req.path !== '/health' && Math.random() < ERROR_RATE) {
+    return res.status(503).json({ message: 'Simulated random error. Retry.' })
+  }
+  next()
 }
 
-function auditIdNumber(id) {
-  return Number(String(id || "").replace("aud_", "")) || 0;
-}
+app.use(withSimulation)
 
-function sortAuditsByIdAsc() {
-  DB.audits.sort((left, right) => auditIdNumber(left.id) - auditIdNumber(right.id));
-}
+// ---- Endpoints ----
 
-function nextCheckId(auditId, position) {
-  return `chk_${auditId.replace("aud_", "")}_${position}`;
-}
+// GET /templates
+app.get('/templates', (req, res) => {
+  const items = db.templates || []
+  res.json({ items, total: items.length })
+})
 
-function startRunSimulation(auditId, runId) {
-  const checks = getChecksByAuditId(auditId).filter(
-    (check) =>
-      check.status === CHECK_STATUS.PENDING ||
-      check.status === CHECK_STATUS.QUEUED ||
-      check.status === CHECK_STATUS.RUNNING,
-  );
-  let index = 0;
+// GET /audits?page&pageSize&q&status(multi)&process&ownerId&sort
+app.get('/audits', (req, res) => {
+  const page = Math.max(1, toNum(req.query.page, 1))
+  const pageSize = Math.max(1, Math.min(100, toNum(req.query.pageSize, 10)))
+  const q = String(req.query.q || '').trim().toLowerCase()
+  const statuses = parseStatusMulti(req.query.status)
+  const process = String(req.query.process || '').trim()
+  const ownerId = String(req.query.ownerId || '').trim()
+  const sort = String(req.query.sort || '-updatedAt')
 
-  const tick = () => {
-    if (index >= checks.length) {
-      recomputeAuditConsistency(auditId);
-      RUNS.set(runId, { auditId, state: "DONE" });
-      writeDb();
-      return;
+  let items = [...(db.audits || [])]
+
+  if (q) {
+    items = items.filter((a) =>
+      [a.name, a.process, a.status, a.owner?.name].some((v) => String(v || '').toLowerCase().includes(q))
+    )
+  }
+  if (statuses.length) {
+    items = items.filter((a) => statuses.includes(a.status))
+  }
+  if (process) {
+    items = items.filter((a) => a.process === process)
+  }
+  if (ownerId) {
+    items = items.filter((a) => a.owner?.id === ownerId)
+  }
+
+  items = sortItems(items, sort)
+
+  const total = items.length
+  const start = (page - 1) * pageSize
+  const paged = items.slice(start, start + pageSize)
+
+  res.json({ items: paged, total, page, pageSize })
+})
+
+// GET /audits/:id -> { audit, checks }
+app.get('/audits/:id', (req, res) => {
+  const audit = db.audits.find((a) => a.id === req.params.id)
+  if (!audit) return res.status(404).json({ message: 'Audit not found' })
+  const checks = getChecksForAudit(audit.id)
+  res.json({ audit, checks })
+})
+
+// POST /audits -> crea auditoría desde template
+app.post('/audits', (req, res) => {
+  const { name, process, ownerId, targetDate, templateId } = req.body || {}
+  if (!name || !process || !ownerId || !templateId) {
+    return res.status(400).json({ message: 'name, process, ownerId, templateId are required' })
+  }
+
+  const owner = (db.owners || []).find((o) => o.id === ownerId)
+  const template = (db.templates || []).find((t) => t.id === templateId)
+  if (!owner) return res.status(400).json({ message: 'ownerId inválido' })
+  if (!template) return res.status(400).json({ message: 'templateId inválido' })
+
+  const auditId = id('aud')
+  const audit = {
+    id: auditId,
+    name,
+    process,
+    status: 'DRAFT',
+    progress: 0,
+    owner: { id: owner.id, name: owner.name },
+    targetDate: targetDate || null,
+    templateId,
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  }
+
+  const templateChecks = template.checks || []
+  const checks = templateChecks.map((c) => ({
+    id: id('chk'),
+    title: c.title,
+    priority: c.priority || 'MEDIUM',
+    status: 'PENDING',
+    evidence: '',
+    reviewed: false,
+    updatedAt: nowIso()
+  }))
+
+  db.audits.unshift(audit)
+  setChecksForAudit(auditId, checks)
+
+  res.status(201).json({ audit, checks })
+})
+
+// POST /audits/:id/run -> runId + ejecución progresiva
+app.post('/audits/:id/run', (req, res) => {
+  const audit = db.audits.find((a) => a.id === req.params.id)
+  if (!audit) return res.status(404).json({ message: 'Audit not found' })
+
+  const checks = getChecksForAudit(audit.id)
+  if (!checks.length) return res.status(400).json({ message: 'Audit has no checks' })
+
+  // evitar doble run
+  const activeRun = [...runs.values()].find((r) => r.auditId === audit.id)
+  if (activeRun) return res.status(409).json({ message: 'Audit already running' })
+
+  audit.status = 'IN_PROGRESS'
+  audit.updatedAt = nowIso()
+
+  checks.forEach((c) => {
+    if (c.status === 'PENDING') {
+      c.status = 'QUEUED'
+      c.updatedAt = nowIso()
+    }
+  })
+
+  const runId = id('run')
+  const state = { auditId: audit.id, index: 0, timer: null }
+  runs.set(runId, state)
+
+  state.timer = setInterval(() => {
+    const currentChecks = getChecksForAudit(audit.id)
+    const idx = state.index
+    if (idx >= currentChecks.length) {
+      clearInterval(state.timer)
+      runs.delete(runId)
+      recomputeAudit(audit)
+      return
     }
 
-    const current = checks[index];
-    current.status = CHECK_STATUS.RUNNING;
-    current.updatedAt = nowIso();
-    writeDb();
+    const check = currentChecks[idx]
 
-    setTimeout(() => {
-      current.status = Math.random() < AUTO_KO_RATE ? CHECK_STATUS.KO : CHECK_STATUS.OK;
-      current.updatedAt = nowIso();
-      recomputeAuditConsistency(auditId);
-      writeDb();
-      index += 1;
-      tick();
-    }, randomInt(350, 900));
-  };
-
-  tick();
-}
-
-const server = http.createServer(async (req, res) => {
-  if (!req.url) {
-    sendJson(res, 400, { error: "Invalid request URL" });
-    return;
-  }
-
-  if (req.method === "OPTIONS") {
-    res.writeHead(204, {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET,POST,PATCH,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-    });
-    res.end();
-    return;
-  }
-
-  const url = new URL(req.url, `http://${req.headers.host}`);
-
-  if (await maybeDelayAndFail(res)) return;
-
-  if (req.method === "GET" && url.pathname === "/audits") {
-    const page = Math.max(1, Number(url.searchParams.get("page")) || 1);
-    const pageSize = Math.max(1, Number(url.searchParams.get("pageSize")) || 10);
-    const q = (url.searchParams.get("q") || "").trim().toLowerCase();
-    const statusList = parseStatuses(url.searchParams);
-    const process = url.searchParams.get("process");
-    const ownerId = url.searchParams.get("ownerId");
-    const sort = url.searchParams.get("sort") || "-updatedAt";
-
-    const filtered = DB.audits.filter((audit) => {
-      const matchQ =
-        q.length === 0 ||
-        audit.name.toLowerCase().includes(q) ||
-        audit.process.toLowerCase().includes(q) ||
-        audit.owner.name.toLowerCase().includes(q);
-
-      const matchStatus = statusList.length === 0 || statusList.includes(audit.status);
-      const matchProcess = !process || audit.process === process;
-      const matchOwner = !ownerId || audit.owner.id === ownerId;
-
-      return matchQ && matchStatus && matchProcess && matchOwner;
-    });
-
-    const sorted = applySort(filtered, sort);
-    const total = sorted.length;
-    const totalPages = Math.max(1, Math.ceil(total / pageSize));
-    const safePage = Math.min(page, totalPages);
-    const start = (safePage - 1) * pageSize;
-
-    sendJson(res, 200, {
-      items: sorted.slice(start, start + pageSize),
-      total,
-      page: safePage,
-      pageSize,
-      totalPages,
-    });
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname === "/templates") {
-    const templates = DB.templates.map((template) => ({
-      ...template,
-      checkCount: template.checkCount ?? template.checks?.length ?? 0,
-      checksPreview:
-        template.checksPreview ??
-        (template.checks || []).slice(0, 2).map((check) => ({
-          title: check.title,
-          priority: check.priority,
-        })),
-    }));
-
-    sendJson(res, 200, templates);
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/audits") {
-    try {
-      const payload = await readJsonBody(req);
-      const template = DB.templates.find((item) => item.id === payload.templateId);
-
-      if (!payload.name || !payload.templateId || !template) {
-        sendJson(res, 400, { error: "Invalid payload. name and templateId are required." });
-        return;
-      }
-
-      const auditId = nextAuditId();
-      const createdAt = nowIso();
-      const ownerName = payload.owner?.name || payload.ownerName || "Sin asignar";
-      const ownerId = payload.owner?.id || payload.ownerId || `u_custom_${Date.now()}`;
-
-      const newAudit = {
-        id: auditId,
-        name: payload.name,
-        process: payload.process || template.process,
-        status: STATUS.DRAFT,
-        progress: 0,
-        owner: { id: ownerId, name: ownerName },
-        targetDate: payload.targetDate || createdAt.slice(0, 10),
-        updatedAt: createdAt,
-        createdAt,
-        templateId: payload.templateId,
-      };
-
-      DB.audits.push(newAudit);
-      sortAuditsByIdAsc();
-
-      const checks = ensureChecksByAuditId(auditId);
-      checks.splice(
-        0,
-        checks.length,
-        ...(template.checks || []).map((check, index) => ({
-          id: nextCheckId(auditId, index + 1),
-          title: check.title,
-          priority: check.priority,
-          status: CHECK_STATUS.PENDING,
-          evidence: "",
-          reviewed: false,
-          updatedAt: createdAt,
-        })),
-      );
-
-      writeDb();
-      sendJson(res, 201, { audit: newAudit });
-    } catch {
-      sendJson(res, 400, { error: "Invalid JSON body" });
-    }
-    return;
-  }
-
-  const auditMatch = url.pathname.match(/^\/audits\/([^/]+)$/);
-  if (req.method === "GET" && auditMatch) {
-    const auditId = auditMatch[1];
-    const audit = DB.audits.find((item) => item.id === auditId);
-
-    if (!audit) {
-      sendJson(res, 404, { error: "Audit not found" });
-      return;
+    if (check.status === 'PENDING' || check.status === 'QUEUED') {
+      check.status = 'RUNNING'
+      check.updatedAt = nowIso()
+      recomputeAudit(audit)
+      return
     }
 
-    const checks = getChecksByAuditId(auditId);
-    sendJson(res, 200, { audit, checks });
-    return;
-  }
-
-  const runMatch = url.pathname.match(/^\/audits\/([^/]+)\/run$/);
-  if (req.method === "POST" && runMatch) {
-    const auditId = runMatch[1];
-    const audit = DB.audits.find((item) => item.id === auditId);
-    if (!audit) {
-      sendJson(res, 404, { error: "Audit not found" });
-      return;
+    if (check.status === 'RUNNING') {
+      check.status = Math.random() < KO_RATE ? 'KO' : 'OK'
+      check.reviewed = true
+      check.updatedAt = nowIso()
+      state.index += 1
+      recomputeAudit(audit)
+      return
     }
 
-    const checks = getChecksByAuditId(auditId);
-    let body = {};
-    try {
-      body = await readJsonBody(req);
-    } catch {
-      sendJson(res, 400, { error: "Invalid JSON body" });
-      return;
-    }
+    // Si fue manualmente actualizado por usuario, avanzar
+    state.index += 1
+    recomputeAudit(audit)
+  }, 700)
 
-    const mode = body.mode === "manual" ? "manual" : "auto";
+  res.status(202).json({ runId })
+})
 
-    audit.status = STATUS.IN_PROGRESS;
-    audit.updatedAt = nowIso();
+// PATCH /audits/:id/checks/:checkId
+app.patch('/audits/:id/checks/:checkId', (req, res) => {
+  const audit = db.audits.find((a) => a.id === req.params.id)
+  if (!audit) return res.status(404).json({ message: 'Audit not found' })
 
-    if (mode === "manual") {
-      writeDb();
-      sendJson(res, 200, { mode, runId: null });
-      return;
-    }
+  const checks = getChecksForAudit(audit.id)
+  const check = checks.find((c) => c.id === req.params.checkId)
+  if (!check) return res.status(404).json({ message: 'Check not found' })
 
-    checks.forEach((check) => {
-      if (check.status === CHECK_STATUS.PENDING) {
-        check.status = CHECK_STATUS.QUEUED;
-        check.updatedAt = nowIso();
-      }
-    });
+  const { reviewed, evidence, status } = req.body || {}
 
-    const runId = `run_${Date.now()}`;
-    RUNS.set(runId, { auditId, state: "RUNNING" });
-    writeDb();
-    startRunSimulation(auditId, runId);
-    sendJson(res, 200, { mode, runId });
-    return;
-  }
+  if (typeof reviewed === 'boolean') check.reviewed = reviewed
+  if (typeof evidence === 'string') check.evidence = evidence
+  if (['PENDING', 'QUEUED', 'RUNNING', 'OK', 'KO'].includes(status)) check.status = status
 
-  const patchMatch = url.pathname.match(/^\/audits\/([^/]+)\/checks\/([^/]+)$/);
-  if (req.method === "PATCH" && patchMatch) {
-    const auditId = patchMatch[1];
-    const checkId = patchMatch[2];
+  check.updatedAt = nowIso()
+  recomputeAudit(audit)
 
-    const checks = getChecksByAuditId(auditId);
-    const checkIndex = checks.findIndex((check) => check.id === checkId);
+  res.json({ check, audit })
+})
 
-    if (checkIndex === -1) {
-      sendJson(res, 404, { error: "Check not found" });
-      return;
-    }
+app.get('/health', (_req, res) => res.json({ ok: true }))
 
-    try {
-      const patch = await readJsonBody(req);
-      const current = checks[checkIndex];
-
-      checks[checkIndex] = {
-        ...current,
-        status:
-          patch.status === CHECK_STATUS.OK || patch.status === CHECK_STATUS.KO
-            ? patch.status
-            : current.status,
-        reviewed: typeof patch.reviewed === "boolean" ? patch.reviewed : current.reviewed,
-        evidence: typeof patch.evidence === "string" ? patch.evidence : current.evidence,
-        updatedAt: nowIso(),
-      };
-
-      recomputeAuditConsistency(auditId);
-      writeDb();
-
-      sendJson(res, 200, { check: checks[checkIndex] });
-    } catch {
-      sendJson(res, 400, { error: "Invalid JSON body" });
-    }
-    return;
-  }
-
-  if (!["GET", "POST", "PATCH"].includes(req.method || "")) {
-    sendJson(res, 405, { error: "Method not allowed" });
-    return;
-  }
-
-  sendJson(res, 404, { error: "Route not found" });
-});
-
-server.listen(PORT, () => {
-  console.log(`[mock-api] running on http://localhost:${PORT}`);
-  console.log("[mock-api] endpoints:");
-  console.log("  GET   /audits");
-  console.log("  GET   /audits/:id");
-  console.log("  POST  /audits");
-  console.log("  POST  /audits/:id/run");
-  console.log("  PATCH /audits/:id/checks/:checkId");
-  console.log("  GET   /templates");
-});
+app.listen(PORT, () => {
+  console.log(`Mock API running on http://localhost:${PORT}`)
+})

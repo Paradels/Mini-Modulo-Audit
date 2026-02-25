@@ -58,6 +58,12 @@ npm run dev
 ```
 
 ### Mock API HTTP (Postman)
+Si no tienes instaladas dependencias del servidor mock, instala:
+```bash
+npm install express cors
+```
+
+Luego ejecuta:
 ```bash
 npm run mock:api
 ```
