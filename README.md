@@ -12,6 +12,7 @@ Módulo web para gestionar auditorías con API simulada y comportamiento realist
 ## Decisiones técnicas
 
 - **Frontend:** Vue 3 + Vue Router + Vite para una SPA ligera con navegación declarativa.
+- **Backend simulado:** Node.js + Express (+ `cors`) en `mock-api/server.js`.
 - **UI:** componentes reutilizables (`UiCard`, `UiBadge`, `UiTable`, `UiModal`, `UiToast`, `UiSkeleton`) para consistencia visual y estados de carga/error.
 - **Capa de datos:** servicio mock en frontend (`src/services/auditService.js`) separado de la UI para mantener el contrato tipo API.
 - **Mock HTTP opcional:** `mock-api/server.js` para probar endpoints con herramientas externas (Postman).
