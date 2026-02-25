@@ -9,6 +9,20 @@ Módulo web para gestionar auditorías con API simulada y comportamiento realist
 - **Wizard de creación (2 pasos)** con validación.
 - **Detalle de auditoría + checks** con ejecución automática o manual.
 
+## Decisiones técnicas
+
+- **Frontend:** Vue 3 + Vue Router + Vite para una SPA ligera con navegación declarativa.
+- **UI:** componentes reutilizables (`UiCard`, `UiBadge`, `UiTable`, `UiModal`, `UiToast`, `UiSkeleton`) para consistencia visual y estados de carga/error.
+- **Capa de datos:** servicio mock en frontend (`src/services/auditService.js`) separado de la UI para mantener el contrato tipo API.
+- **Mock HTTP opcional:** `mock-api/server.js` para probar endpoints con herramientas externas (Postman).
+- **Estado en URL:** el listado toma query params como fuente de verdad para filtros y paginación.
+
+## Trade-offs
+
+- Se priorizó una implementación de producto funcional con buena UX frente a introducir gestión de estado global adicional.
+- La simulación de ejecución usa polling al detalle en lugar de eventos en tiempo real para reducir complejidad.
+- Se mantiene doble estrategia de mocks (servicio frontend + servidor HTTP) para flexibilidad de demo y validación de contrato.
+
 ## Reglas de simulación
 
 - Latencia por request: **300–1200 ms**
@@ -65,3 +79,10 @@ MOCK_API_PORT=4001 MOCK_API_ERROR_RATE=0.1 MOCK_API_KO_RATE=0.2 npm run mock:api
 
 - Seed base: `src/mocks/auditDb.json`
 - En frontend mock: `localStorage` (`mini-audit-mock-db`)
+
+## Próximos pasos
+
+- Añadir tests automáticos (2-3 unitarios en servicio y 1 smoke e2e de flujo listado → creación → detalle).
+- Implementar UI optimista en `PATCH /audits/:id/checks/:checkId` con rollback controlado.
+- Añadir modo offline parcial con fallback al último listado cacheado y aviso explícito.
+- Publicar demo (deploy) y/o contenedor Docker para evaluación remota.
