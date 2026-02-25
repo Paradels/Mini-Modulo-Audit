@@ -148,14 +148,32 @@ app.get('/audits/:id', (req, res) => {
 
 // POST /audits -> creates an audit from a template
 app.post('/audits', (req, res) => {
-  const { name, process, ownerId, targetDate, templateId } = req.body || {}
-  if (!name || !process || !ownerId || !templateId) {
-    return res.status(400).json({ message: 'name, process, ownerId, templateId are required' })
+  const { name, process, ownerId, owner, targetDate, templateId } = req.body || {}
+  if (!name || !process || !templateId) {
+    return res.status(400).json({ message: 'name, process, templateId are required' })
   }
 
-  const owner = (db.owners || []).find((o) => o.id === ownerId)
+  let resolvedOwner = null
+  if (ownerId) {
+    resolvedOwner = (db.owners || []).find((o) => o.id === ownerId) || null
+    if (!resolvedOwner) return res.status(400).json({ message: 'Invalid ownerId' })
+  } else if (owner?.name) {
+    resolvedOwner =
+      (db.owners || []).find((o) => o.name.toLowerCase() === String(owner.name).toLowerCase()) || null
+
+    if (!resolvedOwner) {
+      resolvedOwner = {
+        id: owner?.id || id('u_custom'),
+        name: String(owner.name).trim()
+      }
+      if (!db.owners) db.owners = []
+      db.owners.push(resolvedOwner)
+    }
+  } else {
+    return res.status(400).json({ message: 'ownerId or owner.name is required' })
+  }
+
   const template = (db.templates || []).find((t) => t.id === templateId)
-  if (!owner) return res.status(400).json({ message: 'Invalid ownerId' })
   if (!template) return res.status(400).json({ message: 'Invalid templateId' })
 
   const auditId = id('aud')
@@ -165,7 +183,7 @@ app.post('/audits', (req, res) => {
     process,
     status: 'DRAFT',
     progress: 0,
-    owner: { id: owner.id, name: owner.name },
+    owner: { id: resolvedOwner.id, name: resolvedOwner.name },
     targetDate: targetDate || null,
     templateId,
     createdAt: nowIso(),

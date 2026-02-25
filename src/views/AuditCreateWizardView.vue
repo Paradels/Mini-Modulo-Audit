@@ -342,12 +342,10 @@ async function createAudit() {
   creating.value = true;
 
   try {
-    const ownerId = `u_custom_${Date.now()}`;
     const response = await createAuditRequest({
       name: formData.name,
       process: formData.process,
       owner: {
-        id: ownerId,
         name: formData.ownerName,
       },
       targetDate: formData.targetDate,
