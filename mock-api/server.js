@@ -6,14 +6,14 @@ const app = express()
 app.use(cors())
 app.use(express.json())
 
-// ---- Config simulación ----
-const PORT = Number(process.env.PORT || 4000)
-const MIN_LATENCY = Number(process.env.MIN_LATENCY || 300)
-const MAX_LATENCY = Number(process.env.MAX_LATENCY || 1200)
-const ERROR_RATE = Number(process.env.ERROR_RATE || 0.15) // 15%
-const KO_RATE = Number(process.env.KO_RATE || 0.15) // 15% para ejecución automática
+// ---- Configuration ----
+const PORT = Number(process.env.MOCK_API_PORT || process.env.PORT || 4000)
+const MIN_LATENCY = Number(process.env.MOCK_API_MIN_LATENCY || process.env.MIN_LATENCY || 300)
+const MAX_LATENCY = Number(process.env.MOCK_API_MAX_LATENCY || process.env.MAX_LATENCY || 1200)
+const ERROR_RATE = Number(process.env.MOCK_API_ERROR_RATE || process.env.ERROR_RATE || 0.15) // 15%
+const KO_RATE = Number(process.env.MOCK_API_KO_RATE || process.env.KO_RATE || 0.15) // 15% for automatic execution
 
-// ---- Estado en memoria ----
+// ---- In-memory state ----
 const db = structuredClone(seedDb)
 const runs = new Map() // runId -> { auditId, timer, index }
 
@@ -24,12 +24,14 @@ const nowIso = () => new Date().toISOString()
 const id = (prefix) => `${prefix}_${Math.random().toString(36).slice(2, 9)}`
 const toNum = (v, d) => Number.isFinite(Number(v)) ? Number(v) : d
 
+// Parses multi-status query formats: ?status=A,B or repeated ?status=A&status=B
 function parseStatusMulti(status) {
   if (!status) return []
   if (Array.isArray(status)) return status.flatMap((s) => s.split(',')).map((s) => s.trim()).filter(Boolean)
   return String(status).split(',').map((s) => s.trim()).filter(Boolean)
 }
 
+// Generic sort helper supporting -field (desc) or field (asc)
 function sortItems(items, sort = '-updatedAt') {
   const desc = String(sort).startsWith('-')
   const field = desc ? String(sort).slice(1) : String(sort)
@@ -53,6 +55,7 @@ function setChecksForAudit(auditId, checks) {
   db.checksByAudit[auditId] = checks
 }
 
+// Recomputes audit progress and status from checks consistency rules
 function recomputeAudit(audit) {
   const checks = getChecksForAudit(audit.id)
   const total = checks.length || 1
@@ -75,14 +78,14 @@ function recomputeAudit(audit) {
     return
   }
 
-  // Fin de ejecución
+  // End of execution
   audit.status = hasKO ? 'BLOCKED' : 'DONE'
   audit.progress = 100
 }
 
 async function withSimulation(req, res, next) {
   await wait(rand(MIN_LATENCY, MAX_LATENCY))
-  // Excluir healthcheck de errores aleatorios
+  // Exclude health check from random failures
   if (req.path !== '/health' && Math.random() < ERROR_RATE) {
     return res.status(503).json({ message: 'Simulated random error. Retry.' })
   }
@@ -143,7 +146,7 @@ app.get('/audits/:id', (req, res) => {
   res.json({ audit, checks })
 })
 
-// POST /audits -> crea auditoría desde template
+// POST /audits -> creates an audit from a template
 app.post('/audits', (req, res) => {
   const { name, process, ownerId, targetDate, templateId } = req.body || {}
   if (!name || !process || !ownerId || !templateId) {
@@ -152,8 +155,8 @@ app.post('/audits', (req, res) => {
 
   const owner = (db.owners || []).find((o) => o.id === ownerId)
   const template = (db.templates || []).find((t) => t.id === templateId)
-  if (!owner) return res.status(400).json({ message: 'ownerId inválido' })
-  if (!template) return res.status(400).json({ message: 'templateId inválido' })
+  if (!owner) return res.status(400).json({ message: 'Invalid ownerId' })
+  if (!template) return res.status(400).json({ message: 'Invalid templateId' })
 
   const auditId = id('aud')
   const audit = {
@@ -186,7 +189,7 @@ app.post('/audits', (req, res) => {
   res.status(201).json({ audit, checks })
 })
 
-// POST /audits/:id/run -> runId + ejecución progresiva
+// POST /audits/:id/run -> returns runId and starts progressive execution
 app.post('/audits/:id/run', (req, res) => {
   const audit = db.audits.find((a) => a.id === req.params.id)
   if (!audit) return res.status(404).json({ message: 'Audit not found' })
@@ -194,7 +197,7 @@ app.post('/audits/:id/run', (req, res) => {
   const checks = getChecksForAudit(audit.id)
   if (!checks.length) return res.status(400).json({ message: 'Audit has no checks' })
 
-  // evitar doble run
+  // Prevent concurrent runs for the same audit
   const activeRun = [...runs.values()].find((r) => r.auditId === audit.id)
   if (activeRun) return res.status(409).json({ message: 'Audit already running' })
 
@@ -240,7 +243,7 @@ app.post('/audits/:id/run', (req, res) => {
       return
     }
 
-    // Si fue manualmente actualizado por usuario, avanzar
+    // If manually updated by the evaluator, move to next check
     state.index += 1
     recomputeAudit(audit)
   }, 700)
