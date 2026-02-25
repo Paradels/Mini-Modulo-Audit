@@ -24,6 +24,7 @@ const MOCK_CONFIG = {
   autoKoRate: 0.15,
   routeErrorRate: {
     GET_AUDITS: 0.15,
+    GET_AUDIT_FILTER_OPTIONS: 0.1,
     GET_AUDIT_DETAIL: 0.1,
     POST_AUDIT: 0.1,
     POST_RUN: 0.15,
@@ -236,6 +237,21 @@ export async function fetchAuditDetail(auditId, { forceError = false } = {}) {
     audit: { ...audit },
     checks: checks.map((check) => ({ ...check })),
   };
+}
+
+export async function fetchAuditFilterOptions({ forceError = false } = {}) {
+  await withLatencyAndErrors("GET_AUDIT_FILTER_OPTIONS", forceError);
+
+  const processes = [...new Set(db.audits.map((audit) => audit.process).filter(Boolean))].sort((left, right) =>
+    left.localeCompare(right),
+  );
+
+  const owners = [...db.owners]
+    .filter((owner) => owner?.id && owner?.name)
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((owner) => ({ ...owner }));
+
+  return { processes, owners };
 }
 
 export async function createAudit(payload, { forceError = false } = {}) {

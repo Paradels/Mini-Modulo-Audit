@@ -34,7 +34,7 @@
     </div>
 
     <UiCard customClass="mb-4">
-      <div class="grid gap-3 sm:grid-cols-[1fr_180px_auto]">
+      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_180px_180px_180px_200px_auto]">
         <input
           v-model="filters.search"
           type="text"
@@ -50,6 +50,35 @@
           <option value="IN_PROGRESS">IN_PROGRESS</option>
           <option value="DONE">DONE</option>
           <option value="BLOCKED">BLOCKED</option>
+        </select>
+        <select
+          v-model="filters.process"
+          class="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-200"
+        >
+          <option value="ALL">Todos los procesos</option>
+          <option v-for="processOption in processOptions" :key="processOption" :value="processOption">
+            {{ processOption }}
+          </option>
+        </select>
+        <select
+          v-model="filters.ownerId"
+          class="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-200"
+        >
+          <option value="ALL">Todos los responsables</option>
+          <option v-for="owner in ownerOptions" :key="owner.id" :value="owner.id">
+            {{ owner.name }}
+          </option>
+        </select>
+        <select
+          v-model="filters.sort"
+          class="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-200"
+        >
+          <option value="-updatedAt">Actualizado (más reciente)</option>
+          <option value="updatedAt">Actualizado (más antiguo)</option>
+          <option value="-createdAt">Creado (más reciente)</option>
+          <option value="createdAt">Creado (más antiguo)</option>
+          <option value="name">Nombre (A-Z)</option>
+          <option value="-name">Nombre (Z-A)</option>
         </select>
         <button
           type="button"
@@ -180,7 +209,7 @@ import UiModal from "../components/ui/UiModal.vue";
 import UiSkeleton from "../components/ui/UiSkeleton.vue";
 import UiTable from "../components/ui/UiTable.vue";
 import UiToast from "../components/ui/UiToast.vue";
-import { fetchAudits } from "../services/auditService";
+import { fetchAuditFilterOptions, fetchAudits } from "../services/auditService";
 
 const route = useRoute();
 const router = useRouter();
@@ -190,10 +219,15 @@ const error = ref("");
 const rows = ref([]);
 const previewOpen = ref(false);
 const selectedAudit = ref(null);
+const processOptions = ref([]);
+const ownerOptions = ref([]);
 
 const filters = reactive({
   search: typeof route.query.q === "string" ? route.query.q : "",
   status: typeof route.query.status === "string" ? route.query.status : "ALL",
+  process: typeof route.query.process === "string" ? route.query.process : "ALL",
+  ownerId: typeof route.query.ownerId === "string" ? route.query.ownerId : "ALL",
+  sort: typeof route.query.sort === "string" ? route.query.sort : "-createdAt",
 });
 
 const pagination = reactive({
@@ -247,9 +281,11 @@ async function loadAudits() {
     const result = await fetchAudits({
       q: filters.search,
       status: filters.status === "ALL" ? [] : [filters.status],
+      process: filters.process === "ALL" ? undefined : filters.process,
+      ownerId: filters.ownerId === "ALL" ? undefined : filters.ownerId,
       page: pagination.page,
       pageSize: pagination.pageSize,
-      sort: "-createdAt",
+      sort: filters.sort,
       doneLast: true,
     });
 
@@ -281,6 +317,9 @@ function syncQuery() {
 
   if (filters.search) query.q = filters.search;
   if (filters.status !== "ALL") query.status = filters.status;
+  if (filters.process !== "ALL") query.process = filters.process;
+  if (filters.ownerId !== "ALL") query.ownerId = filters.ownerId;
+  if (filters.sort !== "-createdAt") query.sort = filters.sort;
   if (pagination.page > 1) query.page = String(pagination.page);
 
   router.replace({ query });
@@ -289,7 +328,16 @@ function syncQuery() {
 function resetFilters() {
   filters.search = "";
   filters.status = "ALL";
+  filters.process = "ALL";
+  filters.ownerId = "ALL";
+  filters.sort = "-createdAt";
   pagination.page = 1;
+}
+
+async function loadFilterOptions() {
+  const options = await fetchAuditFilterOptions();
+  processOptions.value = options.processes;
+  ownerOptions.value = options.owners;
 }
 
 function goToPage(nextPage) {
@@ -325,16 +373,22 @@ watch(
   (query) => {
     const nextSearch = typeof query.q === "string" ? query.q : "";
     const nextStatus = typeof query.status === "string" ? query.status : "ALL";
+    const nextProcess = typeof query.process === "string" ? query.process : "ALL";
+    const nextOwnerId = typeof query.ownerId === "string" ? query.ownerId : "ALL";
+    const nextSort = typeof query.sort === "string" ? query.sort : "-createdAt";
     const nextPage = Math.max(1, Number(query.page) || 1);
 
     if (filters.search !== nextSearch) filters.search = nextSearch;
     if (filters.status !== nextStatus) filters.status = nextStatus;
+    if (filters.process !== nextProcess) filters.process = nextProcess;
+    if (filters.ownerId !== nextOwnerId) filters.ownerId = nextOwnerId;
+    if (filters.sort !== nextSort) filters.sort = nextSort;
     if (pagination.page !== nextPage) pagination.page = nextPage;
   },
 );
 
 watch(
-  () => [filters.search, filters.status, pagination.page],
+  () => [filters.search, filters.status, filters.process, filters.ownerId, filters.sort, pagination.page],
   () => {
     syncQuery();
     loadAudits();
@@ -342,6 +396,7 @@ watch(
 );
 
 onMounted(() => {
+  loadFilterOptions();
   loadAudits();
 });
 </script>

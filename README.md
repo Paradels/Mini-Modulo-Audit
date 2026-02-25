@@ -5,6 +5,7 @@ Módulo web para gestionar auditorías con API simulada y comportamiento realist
 ## Qué incluye
 
 - **Listado de auditorías** con búsqueda, filtros, orden y paginación server-side.
+- **Filtros persistidos en URL** (`q`, `status`, `process`, `ownerId`, `sort`, `page`) para mantener estado al recargar/compartir enlaces.
 - **Wizard de creación (2 pasos)** con validación.
 - **Detalle de auditoría + checks** con ejecución automática o manual.
 
