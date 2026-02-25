@@ -836,7 +836,7 @@
       "id": "aud_1007",
       "name": "Auditoría Compras #1007",
       "process": "Compras",
-      "status": "DONE",
+      "status": "BLOCKED",
       "progress": 100,
       "owner": {
         "id": "u_10",
@@ -942,7 +942,7 @@
       "id": "aud_1014",
       "name": "Auditoría Ventas #1014",
       "process": "Ventas",
-      "status": "DONE",
+      "status": "BLOCKED",
       "progress": 100,
       "owner": {
         "id": "u_2",
@@ -1018,7 +1018,7 @@
       "id": "aud_1019",
       "name": "Auditoría Ventas #1019",
       "process": "Ventas",
-      "status": "DONE",
+      "status": "BLOCKED",
       "progress": 100,
       "owner": {
         "id": "u_8",
@@ -1063,7 +1063,7 @@
       "id": "aud_1022",
       "name": "Auditoría Ventas #1022",
       "process": "Ventas",
-      "status": "DONE",
+      "status": "BLOCKED",
       "progress": 100,
       "owner": {
         "id": "u_3",
@@ -1123,7 +1123,7 @@
       "id": "aud_1026",
       "name": "Auditoría Ventas #1026",
       "process": "Ventas",
-      "status": "DONE",
+      "status": "BLOCKED",
       "progress": 100,
       "owner": {
         "id": "u_6",
@@ -1245,7 +1245,7 @@
       "id": "aud_1034",
       "name": "Auditoría Compras #1034",
       "process": "Compras",
-      "status": "DONE",
+      "status": "BLOCKED",
       "progress": 100,
       "owner": {
         "id": "u_7",
@@ -1260,7 +1260,7 @@
       "id": "aud_1035",
       "name": "Auditoría Finanzas #1035",
       "process": "Finanzas",
-      "status": "DONE",
+      "status": "BLOCKED",
       "progress": 100,
       "owner": {
         "id": "u_1",
@@ -1290,7 +1290,7 @@
       "id": "aud_1037",
       "name": "Auditoría Operaciones #1037",
       "process": "Operaciones",
-      "status": "DONE",
+      "status": "BLOCKED",
       "progress": 100,
       "owner": {
         "id": "u_5",
@@ -1350,7 +1350,7 @@
       "id": "aud_1041",
       "name": "Auditoría Seguridad #1041",
       "process": "Seguridad",
-      "status": "DONE",
+      "status": "BLOCKED",
       "progress": 100,
       "owner": {
         "id": "u_10",
@@ -1365,7 +1365,7 @@
       "id": "aud_1042",
       "name": "Auditoría Ventas #1042",
       "process": "Ventas",
-      "status": "DONE",
+      "status": "BLOCKED",
       "progress": 100,
       "owner": {
         "id": "u_1",
@@ -1485,7 +1485,7 @@
       "id": "aud_1050",
       "name": "Auditoría Compras #1050",
       "process": "Compras",
-      "status": "DONE",
+      "status": "BLOCKED",
       "progress": 100,
       "owner": {
         "id": "u_10",
@@ -1515,7 +1515,7 @@
       "id": "aud_1052",
       "name": "Auditoría Compras #1052",
       "process": "Compras",
-      "status": "DONE",
+      "status": "BLOCKED",
       "progress": 100,
       "owner": {
         "id": "u_4",
