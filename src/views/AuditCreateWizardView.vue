@@ -49,7 +49,7 @@
                 id="name"
                 v-model.trim="formData.name"
                 type="text"
-                maxlength="80"
+                maxlength="40"
                 class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-200"
                 placeholder="Ej. Auditoría ISO 27001 - Compras"
               />
@@ -64,7 +64,7 @@
                 id="process"
                 v-model.trim="formData.process"
                 type="text"
-                maxlength="80"
+                maxlength="40"
                 class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-200"
                 placeholder="Compras / Seguridad..."
               />
@@ -79,7 +79,7 @@
                 id="owner"
                 v-model.trim="formData.ownerName"
                 type="text"
-                maxlength="80"
+                maxlength="40"
                 class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-200"
                 placeholder="Nombre del responsable"
               />
@@ -211,7 +211,7 @@ const creating = ref(false);
 const templatesLoading = ref(false);
 const templatesError = ref("");
 const templateValidationError = ref("");
-const MAX_TEXT_LENGTH = 80;
+const MAX_TEXT_LENGTH = 40;
 
 const formData = reactive({
   name: "",

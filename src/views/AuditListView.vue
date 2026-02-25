@@ -38,6 +38,7 @@
         <input
           v-model="filters.search"
           type="text"
+          maxlength="40"
           placeholder="Buscar por nombre, proceso o responsable..."
           class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none ring-indigo-200 placeholder:text-slate-400 focus:ring"
         />
