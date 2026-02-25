@@ -71,6 +71,8 @@ Este repositorio incluye:
 
 ## Instalación y arranque
 
+> **Importante:** para ejecutar el mock API debes crear tu archivo `.env` local a partir de `.env.example`.
+
 Instalar dependencias del proyecto:
 
 ```bash
@@ -82,6 +84,8 @@ Crear archivo de entorno para centralizar configuración del mock API:
 ```bash
 cp .env.example .env
 ```
+
+Después, ajusta en `.env` los valores que quieras usar (puerto, latencia, error rate, KO rate).
 
 Si necesitas instalar explícitamente dependencias del mock API:
 
