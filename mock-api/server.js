@@ -1,5 +1,6 @@
 import express from 'express'
 import cors from 'cors'
+import swaggerUi from 'swagger-ui-express'
 import seedDb from '../src/mocks/auditDb.json' with { type: 'json' }
 
 const app = express()
@@ -12,6 +13,73 @@ const MIN_LATENCY = Number(process.env.MOCK_API_MIN_LATENCY || process.env.MIN_L
 const MAX_LATENCY = Number(process.env.MOCK_API_MAX_LATENCY || process.env.MAX_LATENCY || 1200)
 const ERROR_RATE = Number(process.env.MOCK_API_ERROR_RATE || process.env.ERROR_RATE || 0.15) // 15%
 const KO_RATE = Number(process.env.MOCK_API_KO_RATE || process.env.KO_RATE || 0.15) // 15% for automatic execution
+
+const openApiSpec = {
+  openapi: '3.0.3',
+  info: {
+    title: 'Mini Módulo Audit - Mock API',
+    version: '1.0.0',
+    description: 'Mock API for audits module with latency, random errors and progressive execution.'
+  },
+  servers: [{ url: `http://localhost:${PORT}` }],
+  paths: {
+    '/audits': {
+      get: {
+        summary: 'Get paginated audits list',
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer' } },
+          { name: 'pageSize', in: 'query', schema: { type: 'integer' } },
+          { name: 'q', in: 'query', schema: { type: 'string' } },
+          { name: 'status', in: 'query', schema: { type: 'string' } },
+          { name: 'process', in: 'query', schema: { type: 'string' } },
+          { name: 'ownerId', in: 'query', schema: { type: 'string' } },
+          { name: 'sort', in: 'query', schema: { type: 'string' } }
+        ],
+        responses: { 200: { description: 'OK' } }
+      },
+      post: {
+        summary: 'Create audit from template',
+        responses: { 201: { description: 'Created' } }
+      }
+    },
+    '/audits/{id}': {
+      get: {
+        summary: 'Get audit detail with checks',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: { description: 'OK' }, 404: { description: 'Not found' } }
+      }
+    },
+    '/audits/{id}/run': {
+      post: {
+        summary: 'Start progressive audit execution',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 202: { description: 'Accepted' } }
+      }
+    },
+    '/audits/{id}/checks/{checkId}': {
+      patch: {
+        summary: 'Update one check',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'checkId', in: 'path', required: true, schema: { type: 'string' } }
+        ],
+        responses: { 200: { description: 'OK' } }
+      }
+    },
+    '/templates': {
+      get: {
+        summary: 'Get templates list',
+        responses: { 200: { description: 'OK' } }
+      }
+    },
+    '/health': {
+      get: {
+        summary: 'Health check',
+        responses: { 200: { description: 'OK' } }
+      }
+    }
+  }
+}
 
 // ---- In-memory state ----
 const db = structuredClone(seedDb)
@@ -86,12 +154,14 @@ function recomputeAudit(audit) {
 async function withSimulation(req, res, next) {
   await wait(rand(MIN_LATENCY, MAX_LATENCY))
   // Exclude health check from random failures
-  if (req.path !== '/health' && Math.random() < ERROR_RATE) {
+  if (req.path !== '/health' && !req.path.startsWith('/docs') && Math.random() < ERROR_RATE) {
     return res.status(503).json({ message: 'Simulated random error. Retry.' })
   }
   next()
 }
 
+app.get('/docs.json', (_req, res) => res.json(openApiSpec))
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(openApiSpec))
 app.use(withSimulation)
 
 // ---- Endpoints ----

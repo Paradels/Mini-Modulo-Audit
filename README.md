@@ -50,6 +50,17 @@ Este repositorio incluye:
 - `GET /templates`
   - Listado de plantillas para wizard/preview
 
+### Resumen de endpoints
+
+| Método / Ruta | Qué hace | Notas de simulación |
+| --- | --- | --- |
+| `GET /audits` | Listado paginado con filtros y ordenación. | Query params: `page`, `pageSize`, `q`, `status` (multi), `process`, `ownerId`, `sort`. Respuesta: `items + total`. |
+| `GET /audits/:id` | Detalle de auditoría y sus checks. | Devuelve `{ audit, checks }`. |
+| `POST /audits` | Crear auditoría desde wizard. | Crea auditoría + checks `PENDING` a partir de `templateId`. |
+| `POST /audits/:id/run` | Iniciar ejecución simulada. | Devuelve `runId` inmediato; la ejecución avanza por pasos (`QUEUED → RUNNING → OK/KO`). |
+| `PATCH /audits/:id/checks/:checkId` | Actualizar un check. | Ejemplo: `reviewed=true`, `evidence=texto`. |
+| `GET /templates` | Listar plantillas. | Útil para el wizard y la previsualización de checks. |
+
 ## Reglas de simulación
 
 - Latencia variable por request: **300–1200 ms**.
@@ -93,6 +104,12 @@ Si necesitas instalar explícitamente dependencias del mock API:
 npm install express cors
 ```
 
+Si necesitas instalar explícitamente Swagger UI para la documentación de la API:
+
+```bash
+npm install swagger-ui-express
+```
+
 Ejecutar frontend:
 
 ```bash
@@ -106,6 +123,19 @@ npm run mock:api
 ```
 
 Base URL mock API: `http://localhost:4000`
+
+## Swagger (documentación API)
+
+1. Arranca el mock API:
+
+```bash
+npm run mock:api
+```
+
+2. Abre la interfaz Swagger UI en el navegador:
+
+- `http://localhost:4000/docs`
+
 
 ## Pruebas
 
