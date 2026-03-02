@@ -2,7 +2,6 @@
 
 Aplicación web para gestionar auditorías y checklist con una API simulada y comportamiento realista.
 
-## Entrega mínima
 
 Este repositorio incluye:
 
